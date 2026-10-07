@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Analizador AWS</title>
+</head>
+
+<body>
+
+    <h1>Analizando archivos con AWS</h1>
+
+    <form id="uploadForm">
+
+        <div>
+
+            <label for="imagen">
+                Seleccione imagen
+            </label>
+
+            <input
+                type="file"
+                name="imagen"
+                id="imagen"
+                accept="image/*"
+                required
+            >
+
+        </div>
+
+        <button type="submit">
+            Enviar
+        </button>
+
+    </form>
+
+    <div>
+
+        <h3>Resultados del analisis</h3>
+
+        <ul id="listaEtiquetas"></ul>
+
+    </div>
+
+    <script>
+
+        const form =
+            document.getElementById("uploadForm");
+
+        const listaEtiquetas =
+            document.getElementById("listaEtiquetas");
+
+
+        form.addEventListener(
+            "submit",
+            async (e) => {
+
+                e.preventDefault();
+
+                const formData =
+                    new FormData(form);
+
+                listaEtiquetas.innerHTML =
+                    `<li>Analizando imagen con AWS...</li>`;
+
+
+                try {
+
+                    const response =
+                        await fetch("/api/analizar", {
+
+                            method: "POST",
+
+                            body: formData
+                        });
+
+
+                    const data =
+                        await response.json();
+
+
+                    if (data.success) {
+
+                        listaEtiquetas.innerHTML = "";
+
+                        data.labels.forEach(label => {
+
+                            const li =
+                                document.createElement("li");
+
+                            li.innerHTML =
+                                `Imagen: ${label.Name}
+                                - confianza:
+                                ${label.Confidence}`;
+
+                            listaEtiquetas.appendChild(li);
+
+                        });
+
+                    } else {
+
+                        listaEtiquetas.innerHTML = `
+                            <li>${data.error}</li>
+                            <li>${data.details}</li>
+                            <li>${data.code}</li>
+                        `;
+
+                    }
+
+                } catch (error) {
+
+                    console.error(error);
+
+                    listaEtiquetas.innerHTML =
+                        `<li>Error de conexión</li>`;
+                }
+            }
+        );
+
+    </script>
+
+</body>
+
+</html>
