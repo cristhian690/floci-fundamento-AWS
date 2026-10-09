@@ -1,101 +1,136 @@
+
 require("dotenv").config();
 
 const express = require("express");
 const multer = require("multer");
 const path = require("path");
 
-// Cliente que gestiona servicio AWS
+// Cliente AWS Textract
 const {
-    RekognitionClient,
-    DetectLabelsCommand
-} = require("@aws-sdk/client-rekognition");
+    TextractClient,
+    DetectDocumentTextCommand
+} = require("@aws-sdk/client-textract");
 
-// OPCIONAL (considerarse cuando se realice pruebas con FLOCI)
-// Configuración del mockup (dato de prueba personalizado)
-const { mockClient } = require("aws-sdk-client-mock")
-const rekognitionMock = mockClient(RekognitionClient)
+// Configuración del mock
+const { mockClient } = require("aws-sdk-client-mock");
 
-// Definir la respuesta personalizada
-// Cliente detecte evento, devolverá...
-rekognitionMock.on(DetectLabelsCommand).resolves({
-    Labels: [
-        { Name: 'Hombre', Confidence: 99.4 },
-        { Name: 'Niño', Confidence: 95.2 },
-        { Name: 'Perro', Confidence: 70.1 },
-        { Name: 'Mujer', Confidence: 98.4 }
+const textractMock = mockClient(TextractClient);
+
+// Respuesta personalizada
+
+textractMock.on(DetectDocumentTextCommand).resolves({
+    Blocks: [
+        {
+            BlockType: "LINE",
+            Text: "Floci",
+            Confidence: 99.0
+        },
+        {
+            BlockType: "LINE",
+            Text: "Documento PDF procesado correctamente",
+            Confidence: 98.5
+        }
     ]
-})
-
+});
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Iniciar el servicio de reconocimiento
-const rekognitionClient = new RekognitionClient({
+// Cliente AWS Textract
+const textractClient = new TextractClient({
     region: process.env.AWS_REGION || "us-east-1",
     endpoint: "http://localhost:4566",
     credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID || "test",
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "test"
     }
 });
 
-// Configuración multer para subir imágenes
+// Configuración de Multer para PDF
 const upload = multer({
-    storage: multer.memoryStorage()
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 5 * 1024 * 1024
+    },
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype === "application/pdf") {
+            cb(null, true);
+        } else {
+            cb(new Error("Solo se permiten archivos PDF"));
+        }
+    }
 });
 
-// Servicios para archivos HTML
+// Archivos HTML
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
 
-// Ruta para procesar la imagen
-app.post("/api/analizar", upload.single("imagen"), async (req, res) => {
-    try {
+// Ruta para analizar el PDF
+app.post("/api/analizar", (req, res) => {
 
-        if (!req.file) {
+    upload.single("documento")(req, res, async (error) => {
+
+        if (error) {
             return res.status(400).json({
-                error: "No adjuntó una imagen válida"
+                success: false,
+                error: error.message
             });
         }
 
-        // Buffer de la imagen subida
-        const imageBuffer = req.file.buffer;
+        try {
 
-        // Configurar comando para detectar etiquetas
-        const params = {
-            Image: {
-                Bytes: imageBuffer
-            },
-            MaxLabels: 10,
-            MinConfidence: 75
-        };
+            if (!req.file) {
+                return res.status(400).json({
+                    success: false,
+                    error: "Debe seleccionar un PDF"
+                });
+            }
 
-        // Instanciar comando
-        const command = new DetectLabelsCommand(params);
+            // Crear comando AWS Textract
+            const command = new DetectDocumentTextCommand({
+                Document: {
+                    Bytes: req.file.buffer
+                }
+            });
 
-        // Enviar petición a Rekognition
-        const response = await rekognitionClient.send(command);
+            console.log("Enviando documento a Textract...");
 
-        // Respuesta al frontend
-        res.json({
-            success: true,
-            labels: response.Labels
-        });
+            // Respuesta simulada del mock
+            const response = await textractClient.send(command);
 
-    } catch (error) {
+            console.log("Respuesta de Textract:", response);
 
-        console.error("Error en el servicio AWS:", error);
+            // Extraer texto y confianza
+            const textos = (response.Blocks || [])
+                .filter(block => block.BlockType === "LINE")
+                .map(block => ({
+                    texto: block.Text,
+                    confianza: block.Confidence
+                }));
 
-        res.status(500).json({
-            error: "No se concretó el análisis en AWS Rekognition",
-            details: error.message,
-            code: error.name
-        });
-    }
+            // Enviar resultados al frontend
+            return res.json({
+                success: true,
+                textos: textos
+            });
+
+        } catch (error) {
+
+            console.error("Error AWS Textract:", error);
+
+            return res.status(500).json({
+                success: false,
+                error: "Error al analizar el documento",
+                details: error.message
+            });
+
+        }
+
+    });
+
 });
 
-// Iniciar servidor web
+// Iniciar servidor
 app.listen(port, () => {
     console.log(`Servidor ejecutándose en http://localhost:${port}`);
 });
